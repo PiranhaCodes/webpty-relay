@@ -9,7 +9,7 @@ The WebPTY Relay service acts as a bridge between web clients (UI) and the PTY b
 ```
 UI (Browser) <--WebSocket--> Relay Service <--UNIX Socket--> PTY Backend
                               |
-                              +--FIFO Tailer--> /run/webpty/sessions/<id>.out
+                              +--FIFO Tailer--> ~/.webpty/sessions/<id>.out
 ```
 
 ## Endpoints
@@ -21,6 +21,7 @@ UI (Browser) <--WebSocket--> Relay Service <--UNIX Socket--> PTY Backend
 Health check endpoint.
 
 **Response:**
+
 ```json
 {
   "ok": true,
@@ -35,10 +36,12 @@ Health check endpoint.
 Creates an invite token for accessing terminal sessions.
 
 **Headers:**
+
 - `X-Admin-Password: <password>` OR
 - `Authorization: Bearer <admin-token>`
 
 **Request:**
+
 ```json
 {
   "role": "read" | "write" | "admin",
@@ -48,6 +51,7 @@ Creates an invite token for accessing terminal sessions.
 ```
 
 **Response:**
+
 ```json
 {
   "ok": true,
@@ -59,6 +63,7 @@ Creates an invite token for accessing terminal sessions.
 ```
 
 **Error Response:**
+
 ```json
 {
   "ok": false,
@@ -71,10 +76,12 @@ Creates an invite token for accessing terminal sessions.
 Lists all active terminal sessions.
 
 **Headers:**
+
 - `X-Admin-Password: <password>` OR
 - `Authorization: Bearer <admin-token>`
 
 **Response:**
+
 ```json
 {
   "ok": true,
@@ -96,10 +103,12 @@ Lists all active terminal sessions.
 Terminates a terminal session.
 
 **Headers:**
+
 - `X-Admin-Password: <password>` OR
 - `Authorization: Bearer <admin-token>`
 
 **Response:**
+
 ```json
 {
   "ok": true
@@ -113,6 +122,7 @@ Terminates a terminal session.
 WebSocket connection for terminal streaming.
 
 **Query Parameters:**
+
 - `token`: JWT authentication token (required)
 
 **Alternative:** Token can be provided in `Authorization: Bearer <token>` header.
@@ -244,18 +254,21 @@ Error message.
 ### Roles & Permissions
 
 #### admin
+
 - All permissions
 - Can create invite tokens
 - Can view all sessions
 - Can terminate any session
 
 #### write
+
 - Can spawn new sessions
 - Can send input to terminal
 - Can resize terminal
 - Can attach to sessions
 
 #### read
+
 - Can attach to sessions (view-only)
 - Cannot send input or resize
 
@@ -273,12 +286,13 @@ Default expiry: 24 hours (configurable via `expires_in` in invite request).
 
 2. **Active**: Multiple clients can attach to the same session. All output is broadcast to all attached clients.
 
-3. **Termination**: 
+3. **Termination**:
+
    - When admin explicitly kills session
    - When last client disconnects (optional, configurable)
    - When PTY process exits
 
-4. **Cleanup**: 
+4. **Cleanup**:
    - FIFO watcher stopped
    - PTY session killed
    - Session removed from manager
@@ -294,25 +308,26 @@ Default expiry: 24 hours (configurable via `expires_in` in invite request).
 
 The relay service tails PTY output from FIFO pipes:
 
-- Location: `/run/webpty/sessions/<session-id>.out`
+- Location: `~/.webpty/sessions/<session-id>.out`
 - Each session has a dedicated goroutine that reads from the FIFO
 - Output is broadcast to all WebSocket clients attached to that session
 - Watcher stops when session is closed
 
 ## Configuration
 
-Configuration file: `/etc/webpty/config.yml`
+Configuration file: `~/.webpty/config.yml`
 
 ```yaml
-relay_port: 7000
-pty_socket: /run/webpty/pty.sock
+relay_port: 7001
+pty_socket: ~/.webpty/pty.sock
 admin_password: "secure-password"
 jwt_secret: "change-me-in-production"
 ```
 
 **Defaults:**
-- `relay_port`: 7000
-- `pty_socket`: /run/webpty/pty.sock
+
+- `relay_port`: 7001
+- `pty_socket`: ~/.webpty/pty.sock
 - `admin_password`: "" (empty, admin endpoints disabled)
 - `jwt_secret`: "change-me-in-production"
 
@@ -328,6 +343,7 @@ All errors follow a consistent format:
 ```
 
 Common errors:
+
 - `"missing authentication token"`: No token provided
 - `"invalid authentication token"`: Token validation failed
 - `"permission denied"`: Role doesn't have required permission
@@ -347,6 +363,7 @@ curl -X POST http://localhost:7000/api/admin/invite \
 ```
 
 Response:
+
 ```json
 {
   "ok": true,
@@ -360,30 +377,36 @@ Response:
 ### 2. Client Connects via WebSocket
 
 ```javascript
-const ws = new WebSocket('ws://localhost:7000/ws/session/new-session?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...');
+const ws = new WebSocket(
+  "ws://localhost:7000/ws/session/new-session?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+);
 
 ws.onmessage = (event) => {
   const msg = JSON.parse(event.data);
-  if (msg.type === 'session_created') {
-    console.log('Session created:', msg.id);
-  } else if (msg.type === 'output') {
+  if (msg.type === "session_created") {
+    console.log("Session created:", msg.id);
+  } else if (msg.type === "output") {
     // Display terminal output
     terminal.write(msg.data);
   }
 };
 
 // Send input
-ws.send(JSON.stringify({
-  type: 'input',
-  data: 'ls -la\n'
-}));
+ws.send(
+  JSON.stringify({
+    type: "input",
+    data: "ls -la\n",
+  })
+);
 
 // Resize terminal
-ws.send(JSON.stringify({
-  type: 'resize',
-  cols: 120,
-  rows: 40
-}));
+ws.send(
+  JSON.stringify({
+    type: "resize",
+    cols: 120,
+    rows: 40,
+  })
+);
 ```
 
 ### 3. Admin Views Sessions
@@ -441,6 +464,7 @@ curl -X DELETE http://localhost:7000/api/admin/session/abc-123-def \
 ## Logging
 
 The relay service logs:
+
 - Server startup/shutdown
 - WebSocket connections/disconnections
 - Session creation/cleanup
@@ -449,4 +473,3 @@ The relay service logs:
 - Admin actions
 
 Log format: Standard Go `log` package format with timestamps.
-

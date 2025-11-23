@@ -89,8 +89,8 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request, session
 		SendCh: make(chan []byte, 256),
 	}
 
-	_, exists := s.sessionManager.Get(sessionID)
-	if !exists {
+	// Handle "new" session ID or non-existent session
+	if sessionID == "new" || sessionID == "" {
 		if !auth.HasPermission(claims.Role, "spawn") {
 			log.Printf("Permission denied for spawn (role: %s)", claims.Role)
 			sendError(conn, "permission denied")
@@ -104,12 +104,10 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request, session
 			return
 		}
 
-		s.sessionManager.GetOrCreate(ptyID)
-
 		s.watchersMu.Lock()
 		sess := s.sessionManager.GetOrCreate(ptyID)
 		watcher := NewFIFOWatcher(ptyID, sess)
-		watcher.Start()
+		watcher.Start(s.config.PTYSocket)
 		s.fifoWatchers[ptyID] = watcher
 		s.watchersMu.Unlock()
 
@@ -123,10 +121,44 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request, session
 
 		sessionID = ptyID
 	} else {
-		if !auth.HasPermission(claims.Role, "attach") {
-			log.Printf("Permission denied for attach (role: %s)", claims.Role)
-			sendError(conn, "permission denied")
-			return
+		_, exists := s.sessionManager.Get(sessionID)
+		if !exists {
+			// Session doesn't exist, try to spawn if user has permission
+			if !auth.HasPermission(claims.Role, "spawn") {
+				log.Printf("Permission denied for spawn (role: %s)", claims.Role)
+				sendError(conn, "session not found and permission denied to create")
+				return
+			}
+
+			ptyID, err := s.ptyClient.Spawn()
+			if err != nil {
+				log.Printf("Failed to spawn PTY: %v", err)
+				sendError(conn, "failed to spawn PTY session")
+				return
+			}
+
+			s.watchersMu.Lock()
+			sess := s.sessionManager.GetOrCreate(ptyID)
+			watcher := NewFIFOWatcher(ptyID, sess)
+			watcher.Start(s.config.PTYSocket)
+			s.fifoWatchers[ptyID] = watcher
+			s.watchersMu.Unlock()
+
+			response := WSResponse{
+				Type: "session_created",
+				ID:   ptyID,
+			}
+			if err := conn.WriteJSON(response); err != nil {
+				log.Printf("Failed to send session_created: %v", err)
+			}
+
+			sessionID = ptyID
+		} else {
+			if !auth.HasPermission(claims.Role, "attach") {
+				log.Printf("Permission denied for attach (role: %s)", claims.Role)
+				sendError(conn, "permission denied")
+				return
+			}
 		}
 	}
 
@@ -151,6 +183,13 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request, session
 				log.Printf("Failed to kill PTY session %s: %v", sessionID, err)
 			}
 			s.sessionManager.Cleanup(sessionID)
+		} else if exists {
+			// Broadcast session_closed to remaining clients
+			closeMsg := map[string]interface{}{
+				"type": "session_closed",
+			}
+			closeMsgBytes, _ := json.Marshal(closeMsg)
+			sess.Broadcast(closeMsgBytes)
 		}
 	}()
 
@@ -188,10 +227,14 @@ func (s *Server) readPump(conn *websocket.Conn, client *session.Client, sessionI
 				continue
 			}
 
+			// Handle both string and JSON-encoded string
 			var data string
-			if err := json.Unmarshal(msg.Data, &data); err != nil {
-				sendError(conn, "invalid input data")
-				continue
+			if len(msg.Data) > 0 {
+				// Try to unmarshal as JSON string first
+				if err := json.Unmarshal(msg.Data, &data); err != nil {
+					// If that fails, treat as raw string
+					data = string(msg.Data)
+				}
 			}
 
 			if err := s.ptyClient.Write(sessionID, data); err != nil {
@@ -278,9 +321,9 @@ func (s *Server) writePump(conn *websocket.Conn, client *session.Client) {
 }
 
 func sendError(conn *websocket.Conn, message string) {
-	response := WSResponse{
-		Type: "error",
-		Data: message,
+	response := map[string]interface{}{
+		"type":    "error",
+		"message": message,
 	}
 	conn.WriteJSON(response)
 }

@@ -17,7 +17,7 @@ A production-grade relay service that connects web UIs to PTY backend services v
 ```
 UI (Browser) <--WebSocket--> Relay Service <--UNIX Socket--> PTY Backend
                               |
-                              +--FIFO Tailer--> /run/webpty/sessions/<id>.out
+                              +--FIFO Tailer--> ~/.webpty/sessions/<id>.out
 ```
 
 ## Building
@@ -34,14 +34,15 @@ Create `/etc/webpty/config.yml`:
 
 ```yaml
 relay_port: 7000
-pty_socket: /run/webpty/pty.sock
+pty_socket: ~/.webpty/pty.sock
 admin_password: "your-secure-password"
 jwt_secret: "your-jwt-secret-key"
 ```
 
 **Defaults:**
+
 - `relay_port`: 7000
-- `pty_socket`: /run/webpty/pty.sock
+- `pty_socket`: ~/.webpty/pty.sock
 - `admin_password`: "" (empty, admin endpoints disabled)
 - `jwt_secret`: "change-me-in-production"
 
@@ -53,7 +54,7 @@ If the config file doesn't exist, defaults will be used.
 ./webpty-relay
 ```
 
-The service will start on port 7000 (or configured port) and connect to the PTY backend at `/run/webpty/pty.sock`.
+The service will start on port 7001 (or configured port) and connect to the PTY backend at `~/.webpty/pty.sock`.
 
 ## API Endpoints
 
@@ -94,45 +95,54 @@ curl -X DELETE http://localhost:7000/api/admin/session/<session-id> \
 Connect to a terminal session:
 
 ```javascript
-const ws = new WebSocket('ws://localhost:7000/ws/session/<session-id>?token=<jwt-token>');
+const ws = new WebSocket(
+  "ws://localhost:7000/ws/session/<session-id>?token=<jwt-token>"
+);
 
 ws.onmessage = (event) => {
   const msg = JSON.parse(event.data);
-  if (msg.type === 'output') {
+  if (msg.type === "output") {
     // Display terminal output
     terminal.write(msg.data);
   }
 };
 
 // Send input
-ws.send(JSON.stringify({
-  type: 'input',
-  data: 'ls -la\n'
-}));
+ws.send(
+  JSON.stringify({
+    type: "input",
+    data: "ls -la\n",
+  })
+);
 
 // Resize terminal
-ws.send(JSON.stringify({
-  type: 'resize',
-  cols: 120,
-  rows: 40
-}));
+ws.send(
+  JSON.stringify({
+    type: "resize",
+    cols: 120,
+    rows: 40,
+  })
+);
 ```
 
 ## Roles & Permissions
 
 ### admin
+
 - All permissions
 - Can create invite tokens
 - Can view all sessions
 - Can terminate any session
 
 ### write
+
 - Can spawn new sessions
 - Can send input to terminal
 - Can resize terminal
 - Can attach to sessions
 
 ### read
+
 - Can attach to sessions (view-only)
 - Cannot send input or resize
 
@@ -187,6 +197,7 @@ See [pkg/protocol/relay-protocol.md](pkg/protocol/relay-protocol.md) for detaile
 ## Logging
 
 The service logs:
+
 - Server startup/shutdown
 - WebSocket connections/disconnections
 - Session creation/cleanup
@@ -197,4 +208,3 @@ The service logs:
 ## License
 
 See LICENSE file for details.
-

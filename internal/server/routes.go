@@ -276,6 +276,22 @@ func (s *Server) handleAdminDeleteSession(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	s.watchersMu.Lock()
+	if watcher, exists := s.fifoWatchers[path]; exists {
+		watcher.Stop()
+		delete(s.fifoWatchers, path)
+	}
+	s.watchersMu.Unlock()
+
+	// Broadcast session_closed to all clients before cleanup
+	if sess, exists := s.sessionManager.Get(path); exists {
+		closeMsg := map[string]interface{}{
+			"type": "session_closed",
+		}
+		closeMsgBytes, _ := json.Marshal(closeMsg)
+		sess.Broadcast(closeMsgBytes)
+	}
+
 	if err := s.ptyClient.Kill(path); err != nil {
 		log.Printf("Failed to kill PTY session %s: %v", path, err)
 		w.Header().Set("Content-Type", "application/json")
@@ -286,13 +302,6 @@ func (s *Server) handleAdminDeleteSession(w http.ResponseWriter, r *http.Request
 		})
 		return
 	}
-
-	s.watchersMu.Lock()
-	if watcher, exists := s.fifoWatchers[path]; exists {
-		watcher.Stop()
-		delete(s.fifoWatchers, path)
-	}
-	s.watchersMu.Unlock()
 
 	s.sessionManager.Cleanup(path)
 

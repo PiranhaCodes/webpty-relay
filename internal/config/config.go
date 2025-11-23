@@ -20,20 +20,51 @@ type Config struct {
 // DefaultConfig contains default configuration values.
 var DefaultConfig = Config{
 	RelayPort:     7001,
-	PTYSocket:     "/run/webpty/pty.sock",
-	AdminPassword: "",
-	JWTSecret:     "change-me-in-production",
+	PTYSocket:     "~/.webpty/pty.sock",
+	AdminPassword: "password",
+	JWTSecret:     "secret",
 }
 
-// Load reads configuration from /etc/webpty/config.yml or returns defaults if the file doesn't exist.
+// expandPath expands the tilde (~) character to the user's home directory.
+func expandPath(path string) (string, error) {
+	if len(path) == 0 {
+		return path, nil
+	}
+
+	if path[0] == '~' {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("failed to get home directory: %w", err)
+		}
+		if len(path) == 1 {
+			return homeDir, nil
+		}
+		if path[1] == '/' || path[1] == '\\' {
+			return filepath.Join(homeDir, path[2:]), nil
+		}
+	}
+
+	return path, nil
+}
+
+// Load reads configuration from ~/.webpty/config.yml or returns defaults if the file does not exist.
 func Load() (*Config, error) {
-	configPath := "/etc/webpty/config.yml"
+	configPathRaw := "~/.webpty/config.yml"
+	configPath, err := expandPath(configPathRaw)
+	if err != nil {
+		return nil, fmt.Errorf("failed to expand config path: %w", err)
+	}
 
 	cfg := DefaultConfig
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// Expand default PTYSocket path before returning
+			cfg.PTYSocket, err = expandPath(cfg.PTYSocket)
+			if err != nil {
+				return nil, fmt.Errorf("failed to expand PTY socket path: %w", err)
+			}
 			return &cfg, nil
 		}
 		return nil, fmt.Errorf("failed to read config file: %w", err)
@@ -49,6 +80,13 @@ func Load() (*Config, error) {
 	if cfg.PTYSocket == "" {
 		cfg.PTYSocket = DefaultConfig.PTYSocket
 	}
+
+	// Expand ~ in PTYSocket path
+	cfg.PTYSocket, err = expandPath(cfg.PTYSocket)
+	if err != nil {
+		return nil, fmt.Errorf("failed to expand PTY socket path: %w", err)
+	}
+
 	if cfg.JWTSecret == "" {
 		cfg.JWTSecret = DefaultConfig.JWTSecret
 	}
@@ -56,8 +94,12 @@ func Load() (*Config, error) {
 	return &cfg, nil
 }
 
-// EnsureConfigDir creates the configuration directory if it doesn't exist.
+// EnsureConfigDir creates the configuration directory if it does not exist.
 func EnsureConfigDir() error {
-	configDir := filepath.Dir("/etc/webpty/config.yml")
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to get home directory: %w", err)
+	}
+	configDir := filepath.Join(homeDir, ".webpty")
 	return os.MkdirAll(configDir, 0755)
 }
